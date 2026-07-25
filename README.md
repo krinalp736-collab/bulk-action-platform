@@ -140,10 +140,6 @@ nothing here reads as untested-and-hoping-for-the-best:
 Every RSpec example, and every endpoint in the Postman collection, was actually run against real
 Postgres and real Sidekiq+Redis (not mocked) before being called done.
 
-## Loom video
-
-Script/outline for the walkthrough video: [`docs/LOOM_SCRIPT.md`](docs/LOOM_SCRIPT.md).
-
 ## Assumptions and trade-offs
 
 The short version — full reasoning in [`docs/ARCHITECTURE.md` §13](docs/ARCHITECTURE.md#13-assumptions-and-explicit-trade-offs):
