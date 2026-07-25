@@ -1,0 +1,19 @@
+{
+  "ignored_warnings": [
+    {
+      "warning_type": "SQL Injection",
+      "warning_code": 0,
+      "fingerprint": "1ea850969016239508993a8723320dbdbd583d432dd431d886ac42d683b6cada",
+      "check_name": "SQL",
+      "message": "Possible SQL injection",
+      "file": "app/jobs/bulk_action_enqueue_job.rb",
+      "line": 103,
+      "link": "https://brakemanscanner.org/docs/warning_types/sql_injection/",
+      "confidence": "High",
+      "cwe_id": [89],
+      "note": "Reviewed — not exploitable. Every interpolated value here is either (a) bulk_action.id, a bigint from our own already-persisted record, never client input; (b) bulk_action.entity_type and Time.current, both passed through ActiveRecord::Base.connection.quote explicitly before interpolation; (c) BulkActionLog.statuses[...], a hardcoded Ruby enum mapping with no external input; or (d) scoped_contacts.to_sql, which is ActiveRecord's own rendering of a relation built entirely through parameterized .where() calls (see ContactsFilterQuery) — the pg adapter already quotes every value in it before to_sql produces text. This is the one place the app hand-writes SQL (a single set-based INSERT...SELECT with a ROW_NUMBER() window function for email de-duplication, see docs/ARCHITECTURE.md section 5) specifically because it can't be expressed through the ActiveRecord query interface. See also docs/ARCHITECTURE.md section 9 (Security notes)."
+    }
+  ],
+  "updated": "2026-07-25 10:58:08 +0530",
+  "brakeman_version": "8.0.5"
+}

@@ -1,0 +1,57 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bulk_action_platform
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bulk_action_platform}
+      POSTGRES_DB: bulk_action_platform_production
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U bulk_action_platform" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    command: [ "./bin/thrust", "./bin/rails", "server" ]
+    ports:
+      - "3000:80"
+    environment: &app_env
+      RAILS_ENV: production
+      RAILS_MASTER_KEY: ${RAILS_MASTER_KEY}
+      DATABASE_URL: postgres://bulk_action_platform:${POSTGRES_PASSWORD:-bulk_action_platform}@db:5432/bulk_action_platform_production
+      REDIS_URL: redis://redis:6379/1
+      BULK_ACTION_BATCH_SIZE: ${BULK_ACTION_BATCH_SIZE:-1000}
+      BULK_ACTION_MAX_CONTACT_IDS: ${BULK_ACTION_MAX_CONTACT_IDS:-10000}
+      BULK_ACTION_RATE_LIMIT_PER_MINUTE: ${BULK_ACTION_RATE_LIMIT_PER_MINUTE:-10000}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: [ "bundle", "exec", "sidekiq", "-C", "config/sidekiq.yml" ]
+    environment: *app_env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  db_data:
+  redis_data:

@@ -1,0 +1,342 @@
+{
+  "info": {
+    "name": "Bulk Action Platform",
+    "description": "CRM Bulk Action Platform (Shipmnts assignment). Set `base_url` to wherever the Rails app is running (default http://localhost:3000). The \"Create\" requests auto-capture the created id into `bulk_action_id` so the Show/Stats/Logs/Cancel requests below them can chain automatically — run them top to bottom within a folder.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:3000" },
+    { "key": "bulk_action_id", "value": "" },
+    { "key": "scheduled_bulk_action_id", "value": "" },
+    { "key": "too_many_ids", "value": "[]" },
+    { "key": "other_account_contact_ids", "value": "[]", "description": "Set to a JSON array of real acc_other Contact ids before running request #21" }
+  ],
+  "item": [
+    {
+      "name": "1. Bulk Update (filter-based)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('bulk_action_id', body.id);",
+              "pm.test('status is queued', () => pm.expect(body.status).to.eql('queued'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bulk_action\": {\n    \"account_id\": \"acc_demo\",\n    \"entity_type\": \"Contact\",\n    \"action_type\": \"bulk_update\",\n    \"filter\": { \"status\": \"lead\" },\n    \"payload\": { \"status\": \"active\" }\n  }\n}"
+        },
+        "url": { "raw": "{{base_url}}/bulk-actions", "host": [ "{{base_url}}" ], "path": [ "bulk-actions" ] },
+        "description": "The core mandatory feature: applies one set of field changes (payload) to every Contact matching filter, for the given account. Batch-processed asynchronously via Sidekiq — poll the stats endpoint below to watch it progress."
+      }
+    },
+    {
+      "name": "2. Bulk Update (explicit contact_ids)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bulk_action\": {\n    \"account_id\": \"acc_demo\",\n    \"entity_type\": \"Contact\",\n    \"action_type\": \"bulk_update\",\n    \"contact_ids\": [1, 2, 3],\n    \"payload\": { \"status\": \"active\", \"age\": 40 }\n  }\n}"
+        },
+        "url": { "raw": "{{base_url}}/bulk-actions", "host": [ "{{base_url}}" ], "path": [ "bulk-actions" ] },
+        "description": "Targeting via an explicit id list instead of a filter — the \"select these N checked rows\" UI path. Capped at BULK_ACTION_MAX_CONTACT_IDS (default 10,000); use `filter` for larger targets. Replace the ids with real seeded Contact ids before running."
+      }
+    },
+    {
+      "name": "3. Bulk Archive (second strategy — proves extensibility)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bulk_action\": {\n    \"account_id\": \"acc_demo\",\n    \"entity_type\": \"Contact\",\n    \"action_type\": \"bulk_archive\",\n    \"filter\": { \"status\": \"inactive\" }\n  }\n}"
+        },
+        "url": { "raw": "{{base_url}}/bulk-actions", "host": [ "{{base_url}}" ], "path": [ "bulk-actions" ] },
+        "description": "A second bulk action (needs no payload) registered purely by adding one class + one Registry line — nothing in the controller, jobs, or models changed to add it. Demonstrates the Strategy/Registry extensibility the assignment asks for."
+      }
+    },
+    {
+      "name": "4. Scheduled Bulk Action (future scheduled_at)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('scheduled_bulk_action_id', body.id);",
+              "pm.test('status is scheduled', () => pm.expect(body.status).to.eql('scheduled'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bulk_action\": {\n    \"account_id\": \"acc_demo\",\n    \"entity_type\": \"Contact\",\n    \"action_type\": \"bulk_archive\",\n    \"filter\": {},\n    \"scheduled_at\": \"2026-11-22T23:15:00+05:30\"\n  }\n}"
+        },
+        "url": { "raw": "{{base_url}}/bulk-actions", "host": [ "{{base_url}}" ], "path": [ "bulk-actions" ] },
+        "description": "scheduled_at in the future defers the run via Sidekiq's native perform_at — no extra scheduler gem. Status is `scheduled` until it fires, at which point it transitions to `queued`-equivalent processing automatically. Edit the date to something in the future before sending."
+      }
+    },
+    {
+      "name": "5. Validation: unknown action_type (422)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bulk_action\": {\n    \"account_id\": \"acc_demo\",\n    \"entity_type\": \"Contact\",\n    \"action_type\": \"bulk_teleport\"\n  }\n}"
+        },
+        "url": { "raw": "{{base_url}}/bulk-actions", "host": [ "{{base_url}}" ], "path": [ "bulk-actions" ] },
+        "description": "action_type isn't registered for entity_type — rejected synchronously with a 422, never even reaching the job queue."
+      }
+    },
+    {
+      "name": "6. Validation: unsupported filter key (422)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bulk_action\": {\n    \"account_id\": \"acc_demo\",\n    \"entity_type\": \"Contact\",\n    \"action_type\": \"bulk_update\",\n    \"filter\": { \"account_id\": \"someone_elses_account\" },\n    \"payload\": { \"status\": \"active\" }\n  }\n}"
+        },
+        "url": { "raw": "{{base_url}}/bulk-actions", "host": [ "{{base_url}}" ], "path": [ "bulk-actions" ] },
+        "description": "`account_id` is never an allowed filter key — tenant scoping always comes from the bulk action's own account_id, never from client-supplied filter, so this is rejected rather than silently ignored or (worse) trusted."
+      }
+    },
+    {
+      "name": "7. Validation: unsupported payload key (422)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bulk_action\": {\n    \"account_id\": \"acc_demo\",\n    \"entity_type\": \"Contact\",\n    \"action_type\": \"bulk_update\",\n    \"filter\": { \"status\": \"lead\" },\n    \"payload\": { \"status\": \"active\", \"account_id\": \"hijack\" }\n  }\n}"
+        },
+        "url": { "raw": "{{base_url}}/bulk-actions", "host": [ "{{base_url}}" ], "path": [ "bulk-actions" ] },
+        "description": "payload keys are whitelisted per strategy (BulkActions::ContactBulkUpdate.allowed_payload_keys) so a client can never mass-assign an arbitrary column through the generic jsonb payload."
+      }
+    },
+    {
+      "name": "8. Duplicate-email demo (targets the seeded dataset)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bulk_action\": {\n    \"account_id\": \"acc_demo\",\n    \"entity_type\": \"Contact\",\n    \"action_type\": \"bulk_update\",\n    \"filter\": {},\n    \"payload\": { \"status\": \"active\" }\n  }\n}"
+        },
+        "url": { "raw": "{{base_url}}/bulk-actions", "host": [ "{{base_url}}" ], "path": [ "bulk-actions" ] },
+        "description": "db/seeds/contacts.csv seeds ~40 intentional duplicate emails into acc_demo. An empty filter targets every acc_demo contact, so this run's `skipped_count` (see Stats below) and the Logs?status=skipped request will show them."
+      }
+    },
+    {
+      "name": "9. List Bulk Actions",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/bulk-actions?account_id=acc_demo&status=processing&limit=20",
+          "host": [ "{{base_url}}" ], "path": [ "bulk-actions" ],
+          "query": [
+            { "key": "account_id", "value": "acc_demo" },
+            { "key": "status", "value": "processing", "description": "queued|scheduled|processing|completed|failed|cancelled" },
+            { "key": "limit", "value": "20" },
+            { "key": "offset", "value": "0", "disabled": true }
+          ]
+        }
+      }
+    },
+    {
+      "name": "10. Get Bulk Action",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/bulk-actions/{{bulk_action_id}}",
+          "host": [ "{{base_url}}" ], "path": [ "bulk-actions", "{{bulk_action_id}}" ]
+        }
+      }
+    },
+    {
+      "name": "11. Get Stats",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/bulk-actions/{{bulk_action_id}}/stats",
+          "host": [ "{{base_url}}" ], "path": [ "bulk-actions", "{{bulk_action_id}}", "stats" ]
+        },
+        "description": "success/failed/skipped/total/processed counts, percentage_complete, and running status — O(1) read off denormalized counters, safe to poll frequently."
+      }
+    },
+    {
+      "name": "12. Get Logs (all)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/bulk-actions/{{bulk_action_id}}/logs?limit=50",
+          "host": [ "{{base_url}}" ], "path": [ "bulk-actions", "{{bulk_action_id}}", "logs" ],
+          "query": [
+            { "key": "limit", "value": "50" },
+            { "key": "after", "value": "", "disabled": true, "description": "keyset cursor — pass the previous response's next_cursor" },
+            { "key": "status", "value": "", "disabled": true, "description": "pending|success|failed|skipped" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "13. Get Logs (status=skipped — see duplicate-email skips)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/bulk-actions/{{bulk_action_id}}/logs?status=skipped&limit=50",
+          "host": [ "{{base_url}}" ], "path": [ "bulk-actions", "{{bulk_action_id}}", "logs" ],
+          "query": [ { "key": "status", "value": "skipped" }, { "key": "limit", "value": "50" } ]
+        }
+      }
+    },
+    {
+      "name": "14. Get Logs (status=failed)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/bulk-actions/{{bulk_action_id}}/logs?status=failed&limit=50",
+          "host": [ "{{base_url}}" ], "path": [ "bulk-actions", "{{bulk_action_id}}", "logs" ],
+          "query": [ { "key": "status", "value": "failed" }, { "key": "limit", "value": "50" } ]
+        }
+      }
+    },
+    {
+      "name": "15. Cancel Bulk Action (the scheduled one from #4)",
+      "request": {
+        "method": "PATCH",
+        "url": {
+          "raw": "{{base_url}}/bulk-actions/{{scheduled_bulk_action_id}}/cancel",
+          "host": [ "{{base_url}}" ], "path": [ "bulk-actions", "{{scheduled_bulk_action_id}}", "cancel" ]
+        },
+        "description": "Only valid while status is queued/scheduled/processing — run this against #4's scheduled action before its scheduled_at fires. Re-running it a second time returns 422 (already cancelled)."
+      }
+    },
+    {
+      "name": "16. Validation: filter and contact_ids together (422)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bulk_action\": {\n    \"account_id\": \"acc_demo\",\n    \"entity_type\": \"Contact\",\n    \"action_type\": \"bulk_update\",\n    \"filter\": { \"status\": \"active\" },\n    \"contact_ids\": [1, 2, 3],\n    \"payload\": { \"status\": \"inactive\" }\n  }\n}"
+        },
+        "url": { "raw": "{{base_url}}/bulk-actions", "host": [ "{{base_url}}" ], "path": [ "bulk-actions" ] },
+        "description": "Targeting must be unambiguous — supplying both `filter` and `contact_ids` is rejected with a 422 rather than silently preferring one."
+      }
+    },
+    {
+      "name": "17. Validation: contact_ids exceeds max limit (422)",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "exec": [
+              "// Builds an array one longer than BULK_ACTION_MAX_CONTACT_IDS (default 10,000)",
+              "const tooMany = Array.from({ length: 10001 }, (_, i) => i + 1);",
+              "pm.collectionVariables.set('too_many_ids', JSON.stringify(tooMany));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bulk_action\": {\n    \"account_id\": \"acc_demo\",\n    \"entity_type\": \"Contact\",\n    \"action_type\": \"bulk_update\",\n    \"contact_ids\": {{too_many_ids}},\n    \"payload\": { \"status\": \"active\" }\n  }\n}"
+        },
+        "url": { "raw": "{{base_url}}/bulk-actions", "host": [ "{{base_url}}" ], "path": [ "bulk-actions" ] },
+        "description": "contact_ids is capped at BULK_ACTION_MAX_CONTACT_IDS (default 10,000) — the pre-request script builds a 10,001-element array. Use `filter` instead for larger targets."
+      }
+    },
+    {
+      "name": "18. Validation: scheduled_at in the past (422)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bulk_action\": {\n    \"account_id\": \"acc_demo\",\n    \"entity_type\": \"Contact\",\n    \"action_type\": \"bulk_update\",\n    \"filter\": { \"status\": \"lead\" },\n    \"payload\": { \"status\": \"active\" },\n    \"scheduled_at\": \"2020-01-01T00:00:00Z\"\n  }\n}"
+        },
+        "url": { "raw": "{{base_url}}/bulk-actions", "host": [ "{{base_url}}" ], "path": [ "bulk-actions" ] },
+        "description": "scheduled_at must be in the future — a past timestamp is rejected at creation time rather than silently running immediately."
+      }
+    },
+    {
+      "name": "19. Validation: missing required fields (422)",
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bulk_action\": {\n    \"filter\": { \"status\": \"lead\" },\n    \"payload\": { \"status\": \"active\" }\n  }\n}"
+        },
+        "url": { "raw": "{{base_url}}/bulk-actions", "host": [ "{{base_url}}" ], "path": [ "bulk-actions" ] },
+        "description": "account_id, entity_type, and action_type are all required — omitting them surfaces standard ActiveRecord presence errors, not a 500."
+      }
+    },
+    {
+      "name": "20. Get Bulk Action: not found (404)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{base_url}}/bulk-actions/999999999",
+          "host": [ "{{base_url}}" ], "path": [ "bulk-actions", "999999999" ]
+        },
+        "description": "A nonexistent id returns a clean 404, not a 500 or an empty 200."
+      }
+    },
+    {
+      "name": "21. Tenant isolation: contact_ids from another account are ignored",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.collectionVariables.set('tenant_isolation_action_id', body.id);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [ { "key": "Content-Type", "value": "application/json" } ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bulk_action\": {\n    \"account_id\": \"acc_demo\",\n    \"entity_type\": \"Contact\",\n    \"action_type\": \"bulk_update\",\n    \"contact_ids\": {{other_account_contact_ids}},\n    \"payload\": { \"status\": \"active\" }\n  }\n}"
+        },
+        "url": { "raw": "{{base_url}}/bulk-actions", "host": [ "{{base_url}}" ], "path": [ "bulk-actions" ] },
+        "description": "Set the `other_account_contact_ids` collection variable to a JSON array of real Contact ids belonging to `acc_other` (e.g. via `bin/rails runner \"puts Contact.where(account_id: 'acc_other').limit(3).pluck(:id).to_json\"`). The query always anchors on `bulk_action.account_id` (acc_demo) before applying contact_ids, so these rows should NOT be touched — after this completes, check Stats (#11) and confirm total_count is 0, and separately verify in the DB that the acc_other rows are unchanged."
+      }
+    },
+    {
+      "name": "22. Cancel: re-cancel an already-terminal action (422)",
+      "request": {
+        "method": "PATCH",
+        "url": {
+          "raw": "{{base_url}}/bulk-actions/{{bulk_action_id}}/cancel",
+          "host": [ "{{base_url}}" ], "path": [ "bulk-actions", "{{bulk_action_id}}", "cancel" ]
+        },
+        "description": "Run this against #1's bulk_action_id after it has already reached `completed` (poll #10/#11 first to confirm). cancellable? only allows scheduled/queued/processing, so this should return 422, not silently succeed."
+      }
+    }
+  ]
+}

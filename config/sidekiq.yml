@@ -1,0 +1,10 @@
+---
+:concurrency: <%= ENV.fetch("SIDEKIQ_CONCURRENCY", 10) %>
+
+:queues:
+  - [bulk_action_batch, 3]
+  - [bulk_action_enqueue, 2]
+  - [default, 1]
+
+production:
+  :concurrency: <%= ENV.fetch("SIDEKIQ_CONCURRENCY", 25) %>
