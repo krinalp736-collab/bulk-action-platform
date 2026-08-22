@@ -20,7 +20,7 @@ gem "bootsnap", require: false
 gem "csv"
 
 # Background job processing backed by Redis
-gem "sidekiq", "~> 8.0"
+gem "sidekiq", "~> 8.1"
 gem "redis", "~> 5.0"
 
 # Loads environment variables from .env in development/test
